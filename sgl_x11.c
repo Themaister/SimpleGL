@@ -126,17 +126,20 @@ int sgl_init(const struct sgl_context_options *opts)
 
    int attrs[] = { GLX_RGBA, GLX_DOUBLEBUFFER, None };
    XVisualInfo *vi = glXChooseVisual(g_dpy, DefaultScreen(g_dpy), attrs);
+
+   bool fullscreen = opts->screen_type == SGL_SCREEN_FULLSCREEN;
    
    XSetWindowAttributes swa = {
       .colormap = g_cmap = XCreateColormap(g_dpy, RootWindow(g_dpy, vi->screen), vi->visual, AllocNone),
       .border_pixel = 0,
       .event_mask = StructureNotifyMask,
+      .override_redirect = fullscreen ? True : False,
    };
 
    g_win = XCreateWindow(g_dpy, RootWindow(g_dpy, vi->screen),
          0, 0, opts->width, opts->height, 0,
          vi->depth, InputOutput, vi->visual, 
-         CWBorderPixel | CWColormap | CWEventMask, &swa);
+         CWBorderPixel | CWColormap | CWEventMask | (fullscreen ? CWOverrideRedirect : 0), &swa);
    XSetWindowBackground(g_dpy, g_win, 0);
 
    g_last_width = opts->width;
@@ -144,8 +147,10 @@ int sgl_init(const struct sgl_context_options *opts)
 
    sgl_set_window_title(opts->title);
 
-   XMapWindow(g_dpy, g_win);
-   XSync(g_dpy, False);
+   if (fullscreen)
+      XMapRaised(g_dpy, g_win);
+   else
+      XMapWindow(g_dpy, g_win);
 
    if (opts->screen_type == SGL_SCREEN_WINDOWED_FULLSCREEN)
       set_windowed_fullscreen();
@@ -167,7 +172,6 @@ int sgl_init(const struct sgl_context_options *opts)
 
    g_ctx = glXCreateContext(g_dpy, vi, NULL, GL_TRUE);
    glXMakeCurrent(g_dpy, g_win, g_ctx);
-   XSync(g_dpy, False);
 
    int val;
    glXGetConfig(g_dpy, vi, GLX_DOUBLEBUFFER, &val);
