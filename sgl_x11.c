@@ -17,11 +17,15 @@
 #include "sgl.h"
 
 #include <GL/gl.h>
+
 #include <GL/glx.h>
+#include <X11/extensions/xf86vmode.h>
+
 #include <stddef.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdbool.h>
+#include <stdlib.h>
 
 static Display *g_dpy;
 static Window g_win;
@@ -33,6 +37,7 @@ static bool g_is_double_buffered;
 
 static int g_last_width;
 static int g_last_height;
+static bool g_resized;
 
 static Atom g_quit_atom;
 static volatile sig_atomic_t g_quit;
@@ -107,6 +112,72 @@ static void set_windowed_fullscreen(void)
          &xev);
 }
 
+static XF86VidModeModeInfo g_desktop_mode;
+static bool g_should_reset_mode;
+
+struct sgl_resolution *sgl_get_desktop_modes(unsigned *num_modes)
+{
+   XF86VidModeModeInfo **modes;
+   int mode_num;
+   Display *dpy = XOpenDisplay(NULL);
+   if (!dpy)
+      return NULL;
+
+   XF86VidModeGetAllModeLines(dpy, DefaultScreen(dpy), &mode_num, &modes);
+
+   struct sgl_resolution *sgl_modes = calloc(mode_num, sizeof(*sgl_modes));
+   if (!sgl_modes)
+      goto error;
+
+   for (int i = 0; i < mode_num; i++)
+   {
+      sgl_modes[i].width = modes[i]->hdisplay;
+      sgl_modes[i].height = modes[i]->vdisplay;
+   }
+
+   XCloseDisplay(dpy);
+   XFree(modes);
+
+   *num_modes = mode_num;
+
+   return sgl_modes;
+
+error:
+   XCloseDisplay(dpy);
+   XFree(modes);
+   return NULL;
+}
+
+static void set_desktop_mode(void)
+{
+   XF86VidModeModeInfo **modes;
+   int num_modes;
+   XF86VidModeGetAllModeLines(g_dpy, DefaultScreen(g_dpy), &num_modes, &modes);
+   g_desktop_mode = *modes[0];
+   XFree(modes);
+}
+
+static bool get_video_mode(int width, int height, XF86VidModeModeInfo *mode)
+{
+   XF86VidModeModeInfo **modes;
+   int num_modes;
+   XF86VidModeGetAllModeLines(g_dpy, DefaultScreen(g_dpy), &num_modes, &modes);
+
+   bool ret = false;
+   for (int i = 0; i < num_modes; i++)
+   {
+      if (modes[i]->hdisplay == width && modes[i]->vdisplay == height)
+      {
+         *mode = *modes[i];
+         ret = true;
+         break;
+      }
+   }
+
+   XFree(modes);
+   return ret;
+}
+
 int sgl_init(const struct sgl_context_options *opts)
 {
    if (g_inited)
@@ -114,6 +185,7 @@ int sgl_init(const struct sgl_context_options *opts)
 
    g_quit = 0;
    g_has_focus = true;
+   g_resized = false;
 
    g_dpy = XOpenDisplay(NULL);
    if (!g_dpy)
@@ -136,8 +208,31 @@ int sgl_init(const struct sgl_context_options *opts)
       .override_redirect = fullscreen ? True : False,
    };
 
+   unsigned width = opts->res.width;
+   unsigned height = opts->res.height;
+
+   set_desktop_mode();
+
+   if (fullscreen)
+   {
+      XF86VidModeModeInfo mode;
+      if (get_video_mode(width, height, &mode))
+      {
+         XF86VidModeSwitchToMode(g_dpy, DefaultScreen(g_dpy), &mode);
+         XF86VidModeSetViewPort(g_dpy, DefaultScreen(g_dpy), 0, 0);
+         g_should_reset_mode = true;
+      }
+      else
+         goto error;
+   }
+   else if (opts->screen_type == SGL_SCREEN_WINDOWED_FULLSCREEN)
+   {
+      width = g_desktop_mode.hdisplay;
+      height = g_desktop_mode.vdisplay;
+   }
+
    g_win = XCreateWindow(g_dpy, RootWindow(g_dpy, vi->screen),
-         0, 0, opts->res.width, opts->res.height, 0,
+         0, 0, width, height, 0,
          vi->depth, InputOutput, vi->visual, 
          CWBorderPixel | CWColormap | CWEventMask | (fullscreen ? CWOverrideRedirect : 0), &swa);
    XSetWindowBackground(g_dpy, g_win, 0);
@@ -148,7 +243,13 @@ int sgl_init(const struct sgl_context_options *opts)
    sgl_set_window_title(opts->title);
 
    if (fullscreen)
+   {
       XMapRaised(g_dpy, g_win);
+      XWarpPointer(g_dpy, None, g_win, 0, 0, 0, 0, 0, 0);
+      XGrabKeyboard(g_dpy, g_win, True, GrabModeAsync, GrabModeAsync, CurrentTime);
+      XGrabPointer(g_dpy, g_win, True, ButtonPressMask,
+            GrabModeAsync, GrabModeAsync, g_win, None, CurrentTime);
+   }
    else
       XMapWindow(g_dpy, g_win);
 
@@ -216,6 +317,13 @@ void sgl_deinit(void)
       g_cmap = None;
    }
 
+   if (g_should_reset_mode)
+   {
+      XF86VidModeSwitchToMode(g_dpy, DefaultScreen(g_dpy), &g_desktop_mode);
+      XF86VidModeSetViewPort(g_dpy, DefaultScreen(g_dpy), 0, 0);
+      g_should_reset_mode = false;
+   }
+
    if (g_dpy)
    {
       XCloseDisplay(g_dpy);
@@ -239,12 +347,11 @@ void sgl_set_swap_interval(unsigned interval)
 
 int sgl_check_resize(unsigned *width, unsigned *height)
 {
-   XWindowAttributes attr;
-   XGetWindowAttributes(g_dpy, g_win, &attr);
-   if ((attr.width != g_last_width) || (attr.height != g_last_height))
+   if (g_resized)
    {
-      *width = g_last_width = attr.width;
-      *height = g_last_height = attr.height;
+      *width = g_last_width;
+      *height = g_last_height;
+      g_resized = false;
       return SGL_TRUE;
    }
    else
@@ -261,11 +368,22 @@ int sgl_is_alive(void)
       {
          case ClientMessage:
             if ((Atom)event.xclient.data.l[0] == g_quit_atom)
-               return false;
+               g_quit = true;
+            break;
+
+         case ConfigureNotify:
+            if (event.xconfigure.width != g_last_width || event.xconfigure.height != g_last_height)
+            {
+               g_resized = true;
+               g_last_width = event.xconfigure.width;
+               g_last_height = event.xconfigure.height;
+            }
+            printf("Configure event! Width = %u, Height = %u\n", g_last_width, g_last_height);
             break;
 
          case DestroyNotify:
-            return false;
+            g_quit = true;
+            break;
 
          case MapNotify:
             g_has_focus = true;
@@ -285,7 +403,11 @@ int sgl_has_focus(void)
    if (!sgl_is_alive())
       return SGL_FALSE;
 
-   return g_has_focus;
+   Window win;
+   int rev;
+   XGetInputFocus(g_dpy, &win, &rev);
+
+   return (win == g_win && g_has_focus) || g_should_reset_mode; // Fullscreen
 }
 
 void sgl_set_window_title(const char *name)

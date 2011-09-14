@@ -21,24 +21,38 @@
 extern "C" {
 #endif
 
-#define SGL_SCREEN_WINDOWED 0x0
-#define SGL_SCREEN_FULLSCREEN 0x1
-#define SGL_SCREEN_WINDOWED_FULLSCREEN 0x2
+enum sgl_screen_type
+{
+   SGL_SCREEN_WINDOWED = 0,
+   SGL_SCREEN_FULLSCREEN,
+   SGL_SCREEN_WINDOWED_FULLSCREEN,
+
+   SGL_INT_DUMMY = 0x7fffffff // Force at least 32-bit representation.
+};
 
 struct sgl_resolution
 {
+   // Requested width of window. Ignored if using windowed fullscreen.
    unsigned width;
+   // Requested height of window. Ignored if using windowed fullscreen.
    unsigned height;
+
+   // Monitor index. 0 = First monitor, 1 = Second monitor, etc ...
+   unsigned monitor_index;
 };
 
 struct sgl_context_options
 {
+   // Resolution info.
    struct sgl_resolution res;
 
-   unsigned screen_type;
-   unsigned monitor_index;
+   // Window type.
+   enum sgl_screen_type screen_type;
+
+   // Swap interval. 0 = No VSync, 1 = VSync.
    unsigned swap_interval;
 
+   // Initial window title.
    const char *title;
 };
 
@@ -72,19 +86,32 @@ struct sgl_handles
 #define SGL_TRUE 1
 #define SGL_FALSE 0
 
+// Get information about the available desktop modes.
+// modes[0] will refer to the current desktop resolution.
+// Can be called before sgl_init().
+// The pointer must be free'd using free().
+struct sgl_resolution *sgl_get_desktop_modes(unsigned *num_modes);
+
 int sgl_init(const struct sgl_context_options *opts);
 void sgl_deinit(void);
 
 void sgl_set_window_title(const char *title);
+
+// Check if window was resized. Might be resized even if the user didn't explicitly resize.
 int sgl_check_resize(unsigned *width, unsigned *height);
+
 void sgl_set_swap_interval(unsigned interval);
 void sgl_swap_buffers(void);
 
 int sgl_has_focus(void);
+
+// When this returns 0, the window or application was killed (SIGINT/SIGTERM). 
 int sgl_is_alive(void);
 
+// Get underlying platform specific window handles. Use it to implement input.
 void sgl_get_handles(struct sgl_handles *handles);
 
+// GetProcAddress() wrapper.
 typedef void (*sgl_function_t)(void);
 sgl_function_t sgl_get_proc_address(const char *sym);
 
