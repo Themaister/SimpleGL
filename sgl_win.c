@@ -185,11 +185,6 @@ int sgl_init(const struct sgl_context_options *opts)
       case SGL_SCREEN_FULLSCREEN:
          g_fullscreen = true;
          style = WS_POPUP | WS_VISIBLE;
-         if (width == 0 || height == 0)
-         {
-            width = rect.right - rect.left;
-            height = rect.bottom - rect.top;
-         }
 
          // Recover, just use windowed fullscreen instead.
          if (!set_fullscreen(width, height))
