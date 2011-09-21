@@ -25,10 +25,15 @@ extern "C" {
 #define SGL_SCREEN_FULLSCREEN 0x1
 #define SGL_SCREEN_WINDOWED_FULLSCREEN 0x2
 
-struct sgl_context_options
+struct sgl_resolution
 {
    unsigned width;
    unsigned height;
+};
+
+struct sgl_context_options
+{
+   struct sgl_resolution res;
 
    unsigned screen_type;
    unsigned monitor_index;

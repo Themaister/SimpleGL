@@ -137,13 +137,13 @@ int sgl_init(const struct sgl_context_options *opts)
    };
 
    g_win = XCreateWindow(g_dpy, RootWindow(g_dpy, vi->screen),
-         0, 0, opts->width, opts->height, 0,
+         0, 0, opts->res.width, opts->res.height, 0,
          vi->depth, InputOutput, vi->visual, 
          CWBorderPixel | CWColormap | CWEventMask | (fullscreen ? CWOverrideRedirect : 0), &swa);
    XSetWindowBackground(g_dpy, g_win, 0);
 
-   g_last_width = opts->width;
-   g_last_height = opts->height;
+   g_last_width = opts->res.width;
+   g_last_height = opts->res.height;
 
    sgl_set_window_title(opts->title);
 

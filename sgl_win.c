@@ -161,8 +161,8 @@ int sgl_init(const struct sgl_context_options *opts)
    if (!RegisterClassExA(&g_wndclass))
       return SGL_ERROR;
 
-   unsigned width = opts->width;
-   unsigned height = opts->height;
+   unsigned width = opts->res.width;
+   unsigned height = opts->res.height;
    DWORD style = 0;
    RECT rect;
    GetClientRect(GetDesktopWindow(), &rect);
