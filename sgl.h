@@ -25,9 +25,13 @@ enum sgl_screen_type
 {
    SGL_SCREEN_WINDOWED = 0,
    SGL_SCREEN_FULLSCREEN,
-   SGL_SCREEN_WINDOWED_FULLSCREEN,
+   SGL_SCREEN_WINDOWED_FULLSCREEN
+};
 
-   SGL_INT_DUMMY = 0x7fffffff // Force at least 32-bit representation.
+enum sgl_context_style
+{
+   SGL_CONTEXT_LEGACY = 0,
+   SGL_CONTEXT_MODERN
 };
 
 struct sgl_resolution
@@ -46,6 +50,16 @@ struct sgl_context_options
    // Resolution info.
    struct sgl_resolution res;
 
+   // Context style.
+   struct
+   {
+      enum sgl_context_style style;
+
+      // Major/minor OpenGL version used for modern contexts.
+      unsigned major;
+      unsigned minor;
+   } context;
+
    // Window type.
    enum sgl_screen_type screen_type;
 
@@ -56,11 +70,13 @@ struct sgl_context_options
    const char *title;
 };
 
+#define GL_GLEXT_PROTOTYPES
 #if defined(_WIN32)
 #define SGL_WINDOWS
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <GL/gl.h>
+#include <GL/glext.h>
 struct sgl_handles
 {
    HWND hwnd;
@@ -72,6 +88,7 @@ struct sgl_handles
 #else
 #define SGL_X11
 #include <GL/gl.h>
+#include <GL/glext.h>
 #include <GL/glx.h>
 struct sgl_handles
 {
@@ -114,6 +131,18 @@ void sgl_get_handles(struct sgl_handles *handles);
 // GetProcAddress() wrapper.
 typedef void (*sgl_function_t)(void);
 sgl_function_t sgl_get_proc_address(const char *sym);
+
+// Input callbacks. If non-NULL a callback may be called one or more times in calls to sgl_is_alive().
+typedef void (*sgl_key_callback_t)(int key, int pressed);
+typedef void (*sgl_mouse_move_callback_t)(int delta_x, int delta_y);
+typedef void (*sgl_mouse_button_callback_t)(int button, int pressed, int x, int y);
+struct sgl_input_callbacks
+{
+   sgl_key_callback_t key_cb;
+   sgl_mouse_move_callback_t mouse_move_cb;
+   sgl_mouse_button_callback_t mouse_button_cb;
+};
+void sgl_set_input_callbacks(const struct sgl_input_callbacks *cbs);
 
 #ifdef __cplusplus
 }
