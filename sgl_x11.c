@@ -46,6 +46,10 @@ static XF86VidModeModeInfo g_desktop_mode;
 static bool g_should_reset_mode;
 
 static struct sgl_input_callbacks g_input_cbs;
+static bool g_mouse_grabbed;
+static bool g_mouse_relative;
+static int g_mouse_last_x;
+static int g_mouse_last_y;
 
 static int (*g_pglSwapInterval)(int);
 
@@ -80,6 +84,11 @@ static void hide_mouse(void)
    if (bm_no != None)
       XFreePixmap(g_dpy, bm_no);
    XFreeColors(g_dpy, colormap, &black.pixel, 1, 0);
+}
+
+static void show_mouse(void)
+{
+   XUndefineCursor(g_dpy, g_win);
 }
 
 static Atom XA_NET_WM_STATE;
@@ -275,10 +284,7 @@ int sgl_init(const struct sgl_context_options *opts)
    if (fullscreen)
    {
       XMapRaised(g_dpy, g_win);
-      XWarpPointer(g_dpy, None, g_win, 0, 0, 0, 0, 0, 0);
       XGrabKeyboard(g_dpy, g_win, True, GrabModeAsync, GrabModeAsync, CurrentTime);
-      XGrabPointer(g_dpy, g_win, True, ButtonPressMask,
-            GrabModeAsync, GrabModeAsync, g_win, None, CurrentTime);
    }
    else
       XMapWindow(g_dpy, g_win);
@@ -349,8 +355,6 @@ int sgl_init(const struct sgl_context_options *opts)
    }
    else
       fprintf(stderr, "[SGL]: GLX is not double buffered!\n");
-
-   hide_mouse();
 
    g_inited = true;
    return SGL_OK;
@@ -423,10 +427,13 @@ int sgl_check_resize(unsigned *width, unsigned *height)
 
 static void handle_key_press(int key, int pressed);
 static void handle_button_press(int button, int pressed, int x, int y);
-static void handle_motion(int delta_x, int delta_y);
+static void handle_motion(int x, int y);
 
 int sgl_is_alive(void)
 {
+   int old_mouse_x = g_mouse_last_x;
+   int old_mouse_y = g_mouse_last_y;
+
    XEvent event;
    while (XPending(g_dpy))
    {
@@ -476,6 +483,23 @@ int sgl_is_alive(void)
             g_has_focus = false;
             break;
       }
+   }
+
+   if (g_mouse_relative && g_input_cbs.mouse_move_cb)
+   {
+      int delta_x = g_mouse_last_x - old_mouse_x;
+      int delta_y = g_mouse_last_y - old_mouse_y;
+      
+      if (delta_x || delta_y)
+         g_input_cbs.mouse_move_cb(delta_x, delta_y);
+   }
+
+   if (g_mouse_grabbed)
+   {
+      XWarpPointer(g_dpy, None, g_win, 0, 0, 0, 0,
+            g_last_width >> 1, g_last_height >> 1);
+      g_mouse_last_x = g_last_width >> 1;
+      g_mouse_last_y = g_last_height >> 1;
    }
 
    return !g_quit;
@@ -604,7 +628,10 @@ static const struct key_bind lut_binds[] = {
 void sgl_set_input_callbacks(const struct sgl_input_callbacks *cbs)
 {
    g_input_cbs = *cbs;
-   XSelectInput(g_dpy, g_win, (cbs->key_cb ? KeyPressMask | KeyReleaseMask : 0) | (cbs->mouse_button_cb ? ButtonPressMask | ButtonReleaseMask : 0));
+   XSelectInput(g_dpy, g_win,
+         (cbs->key_cb ? KeyPressMask | KeyReleaseMask : 0) |
+         (cbs->mouse_button_cb ? ButtonPressMask | ButtonReleaseMask : 0) |
+         (cbs->mouse_move_cb ? PointerMotionMask : 0));
 }
 
 static void handle_key_press(int key, int pressed)
@@ -630,11 +657,45 @@ static void handle_button_press(int button, int pressed, int x, int y)
    g_input_cbs.mouse_button_cb(button, pressed, x, y);
 }
 
-static void handle_motion(int delta_x, int delta_y)
+static void handle_motion(int x, int y)
 {
    if (!g_input_cbs.mouse_move_cb)
       return;
 
-   g_input_cbs.mouse_move_cb(delta_x, delta_y);
+   if (!g_mouse_relative)
+      g_input_cbs.mouse_move_cb(x, y);
+   else
+   {
+      g_mouse_last_x = x;
+      g_mouse_last_y = y;
+   }
+}
+
+void sgl_set_mouse_mode(int grab, int relative, int visible)
+{
+   g_mouse_relative = relative;
+
+   if (g_should_reset_mode) // Fullscreen
+      return;
+   
+   g_mouse_grabbed = grab;
+   if (grab)
+   {
+      g_mouse_last_x = g_last_width >> 1;
+      g_mouse_last_y = g_last_height >> 1;
+      XWarpPointer(g_dpy, None, g_win, 0, 0, 0, 0,
+            g_last_width >> 1, g_last_height >> 1);
+
+      XGrabPointer(g_dpy, g_win, True,
+            ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
+            GrabModeAsync, GrabModeAsync, g_win, None, CurrentTime);
+   }
+   else
+      XUngrabPointer(g_dpy, CurrentTime);
+
+   if (visible)
+      show_mouse();
+   else
+      hide_mouse();
 }
 

@@ -133,8 +133,9 @@ typedef void (*sgl_function_t)(void);
 sgl_function_t sgl_get_proc_address(const char *sym);
 
 // Input callbacks. If non-NULL a callback may be called one or more times in calls to sgl_is_alive().
+// Coordinates for mouse are absolute with respect to the window.
 typedef void (*sgl_key_callback_t)(int key, int pressed);
-typedef void (*sgl_mouse_move_callback_t)(int delta_x, int delta_y);
+typedef void (*sgl_mouse_move_callback_t)(int x, int y);
 typedef void (*sgl_mouse_button_callback_t)(int button, int pressed, int x, int y);
 struct sgl_input_callbacks
 {
@@ -142,7 +143,9 @@ struct sgl_input_callbacks
    sgl_mouse_move_callback_t mouse_move_cb;
    sgl_mouse_button_callback_t mouse_button_cb;
 };
+
 void sgl_set_input_callbacks(const struct sgl_input_callbacks *cbs);
+void sgl_set_mouse_mode(int capture, int relative, int visible);
 
 #ifdef __cplusplus
 }
