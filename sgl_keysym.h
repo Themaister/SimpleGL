@@ -1,3 +1,6 @@
+#ifndef SGL_KEYSYM_H__
+#define SGL_KEYSYM_H__
+
 /* 
  * Copyright (c) 2011, Hans-Kristian Arntzen <maister@archlinux.us>
  *
@@ -161,4 +164,6 @@ enum sgl_key
 
    SGLK_LAST
 };
+
+#endif
 

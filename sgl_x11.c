@@ -14,6 +14,7 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+#define SGL_EXPOSE_INTERNAL
 #include "sgl.h"
 #include "sgl_keysym.h"
 
@@ -220,6 +221,8 @@ int sgl_init(const struct sgl_context_options *opts)
       GLX_DEPTH_SIZE       , 24,
       GLX_STENCIL_SIZE     , 8,
       GLX_DOUBLEBUFFER     , True,
+      GLX_SAMPLE_BUFFERS   , 1,
+      GLX_SAMPLES          , opts->samples == 0 ? 1 : opts->samples,
       None
    };
 
@@ -311,7 +314,6 @@ int sgl_init(const struct sgl_context_options *opts)
    // Create context.
    if (opts->context.style == SGL_CONTEXT_MODERN)
    {
-      fprintf(stderr, "[SGL]: Creating modern OpenGL %u.%u context!\n", opts->context.major, opts->context.minor);
       typedef GLXContext (*ContextProc)(Display*, GLXFBConfig,
             GLXContext, Bool, const int *);
 
@@ -326,16 +328,16 @@ int sgl_init(const struct sgl_context_options *opts)
          GLX_CONTEXT_MAJOR_VERSION_ARB, opts->context.major,
          GLX_CONTEXT_MINOR_VERSION_ARB, opts->context.minor,
          GLX_CONTEXT_PROFILE_MASK_ARB, GLX_CONTEXT_CORE_PROFILE_BIT_ARB,
+#ifdef DEBUG
+         GLX_CONTEXT_FLAGS_ARB, GLX_CONTEXT_DEBUG_BIT_ARB,
+#endif
          None,
       };
 
       g_ctx = proc(g_dpy, fbc, 0, true, attribs);
    }
    else
-   {
-      fprintf(stderr, "[SGL]: Creating legacy OpenGL context!\n");
       g_ctx = glXCreateNewContext(g_dpy, fbc, GLX_RGBA_TYPE, 0, True);
-   }
    
    glXMakeCurrent(g_dpy, g_win, g_ctx);
    XSync(g_dpy, False);
@@ -368,6 +370,8 @@ void sgl_deinit(void)
 {
    if (g_ctx)
    {
+      glFinish();
+      glXMakeCurrent(g_dpy, None, NULL);
       glXDestroyContext(g_dpy, g_ctx);
       g_ctx = NULL;
    }
@@ -414,6 +418,16 @@ void sgl_set_swap_interval(unsigned interval)
 
 int sgl_check_resize(unsigned *width, unsigned *height)
 {
+   XWindowAttributes target;
+   XGetWindowAttributes(g_dpy, g_win, &target);
+
+   if (target.width != g_last_width || target.height != g_last_height)
+   {
+      g_resized = true;
+      g_last_width = target.width;
+      g_last_height = target.height;
+   }
+
    if (g_resized)
    {
       *width = g_last_width;
@@ -431,8 +445,8 @@ static void handle_motion(int x, int y);
 
 int sgl_is_alive(void)
 {
-   int old_mouse_x = g_mouse_last_x;
-   int old_mouse_y = g_mouse_last_y;
+   int old_x = g_mouse_last_x;
+   int old_y = g_mouse_last_y;
 
    XEvent event;
    while (XPending(g_dpy))
@@ -462,15 +476,6 @@ int sgl_is_alive(void)
                g_quit = true;
             break;
 
-         case ConfigureNotify:
-            if (event.xconfigure.width != g_last_width || event.xconfigure.height != g_last_height)
-            {
-               g_resized = true;
-               g_last_width = event.xconfigure.width;
-               g_last_height = event.xconfigure.height;
-            }
-            break;
-
          case DestroyNotify:
             g_quit = true;
             break;
@@ -487,6 +492,9 @@ int sgl_is_alive(void)
 
    if (g_mouse_relative && g_input_cbs.mouse_move_cb)
    {
+      int old_mouse_x = g_mouse_grabbed ? g_last_width >> 1 : old_x;
+      int old_mouse_y = g_mouse_grabbed ? g_last_height >> 1 : old_y;
+
       int delta_x = g_mouse_last_x - old_mouse_x;
       int delta_y = g_mouse_last_y - old_mouse_y;
       
@@ -664,11 +672,9 @@ static void handle_motion(int x, int y)
 
    if (!g_mouse_relative)
       g_input_cbs.mouse_move_cb(x, y);
-   else
-   {
-      g_mouse_last_x = x;
-      g_mouse_last_y = y;
-   }
+
+   g_mouse_last_x = x;
+   g_mouse_last_y = y;
 }
 
 void sgl_set_mouse_mode(int grab, int relative, int visible)

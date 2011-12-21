@@ -66,29 +66,43 @@ struct sgl_context_options
    // Swap interval. 0 = No VSync, 1 = VSync.
    unsigned swap_interval;
 
+   // Multisampling (AA). A value of 0 implies 1xAA.
+   unsigned samples;
+
    // Initial window title.
    const char *title;
 };
 
 #define GL_GLEXT_PROTOTYPES
+
+// Win32
 #if defined(_WIN32)
 #define SGL_WINDOWS
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <GL/gl.h>
 #include <GL/glext.h>
+#ifdef SGL_EXPOSE_INTERNAL
 struct sgl_handles
 {
    HWND hwnd;
    HGLRC hglrc;
    HDC hdc;
 };
+#else
+struct sgl_handles;
+#endif
+
+// OSX
 #elif defined(__APPLE__)
 #define SGL_OSX
 #else
+
+// X11
 #define SGL_X11
 #include <GL/gl.h>
 #include <GL/glext.h>
+#ifdef SGL_EXPOSE_INTERNAL
 #include <GL/glx.h>
 struct sgl_handles
 {
@@ -96,6 +110,9 @@ struct sgl_handles
    Window win;
    GLXContext ctx;
 };
+#else
+struct sgl_handles;
+#endif
 #endif
 
 #define SGL_OK 1
