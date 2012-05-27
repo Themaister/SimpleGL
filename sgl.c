@@ -14,7 +14,7 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-// SGL autoselector. Only build sgl.c.
+/* SGL autoselector. Only build sgl.c. */
 
 #if defined(_WIN32)
 #include "sgl_win.c"
