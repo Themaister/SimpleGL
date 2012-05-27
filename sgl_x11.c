@@ -221,8 +221,9 @@ int sgl_init(const struct sgl_context_options *opts)
       GLX_DEPTH_SIZE       , 24,
       GLX_STENCIL_SIZE     , 8,
       GLX_DOUBLEBUFFER     , True,
-      GLX_SAMPLE_BUFFERS   , 1,
-      GLX_SAMPLES          , opts->samples == 0 ? 1 : opts->samples,
+
+      opts->samples ? GLX_SAMPLE_BUFFERS : None, 1,
+      GLX_SAMPLES, opts->samples,
       None
    };
 
