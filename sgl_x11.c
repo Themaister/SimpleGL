@@ -32,6 +32,13 @@ static Window g_win;
 static GLXContext g_ctx;
 static Colormap g_cmap;
 
+static bool g_egl;
+#ifdef SGL_HAVE_EGL
+static EGLContext g_egl_ctx;
+static EGLSurface g_egl_surf;
+static EGLDisplay g_egl_dpy;
+#endif
+
 static bool g_inited;
 static bool g_is_double_buffered;
 
@@ -74,6 +81,7 @@ static void hide_mouse(void)
    XColor black, dummy;
    Colormap colormap;
    static char bm_no_data[] = {0, 0, 0, 0, 0, 0, 0, 0};
+
    colormap = DefaultColormap(g_dpy, DefaultScreen(g_dpy));
    if (!XAllocNamedColor(g_dpy, colormap, "black", &black, &dummy))
       return;
@@ -142,7 +150,7 @@ struct sgl_resolution *sgl_get_desktop_modes(unsigned *num_modes)
 
    for (int i = 0; i < mode_num; i++)
    {
-      sgl_modes[i].width = modes[i]->hdisplay;
+      sgl_modes[i].width  = modes[i]->hdisplay;
       sgl_modes[i].height = modes[i]->vdisplay;
    }
 
@@ -189,23 +197,23 @@ static bool get_video_mode(int width, int height, XF86VidModeModeInfo *mode)
    return ret;
 }
 
-int sgl_init(const struct sgl_context_options *opts)
+int sgl_init_glx(const struct sgl_context_options *opts)
 {
    if (g_inited)
       return SGL_ERROR;
 
-   g_quit = 0;
+   g_quit      = 0;
    g_has_focus = true;
-   g_resized = false;
+   g_resized   = false;
 
    g_dpy = XOpenDisplay(NULL);
    if (!g_dpy)
       goto error;
 
-   // Need GLX 1.4+.
+   // Need GLX 1.3+.
    int major, minor;
    glXQueryVersion(g_dpy, &major, &minor);
-   if (major < 1 || (major == 1 && minor < 4))
+   if (major < 1 || (major == 1 && minor < 3))
       goto error;
 
    // Initialize FBConfig and XVisuals.
@@ -213,17 +221,16 @@ int sgl_init(const struct sgl_context_options *opts)
       GLX_X_RENDERABLE     , True,
       GLX_DRAWABLE_TYPE    , GLX_WINDOW_BIT,
       GLX_RENDER_TYPE      , GLX_RGBA_BIT,
-      GLX_X_VISUAL_TYPE    , GLX_TRUE_COLOR,
+      GLX_DOUBLEBUFFER     , True,
       GLX_RED_SIZE         , 8,
       GLX_GREEN_SIZE       , 8,
       GLX_BLUE_SIZE        , 8,
       GLX_ALPHA_SIZE       , 8,
       GLX_DEPTH_SIZE       , 24,
       GLX_STENCIL_SIZE     , 8,
-      GLX_DOUBLEBUFFER     , True,
 
-      opts->samples ? GLX_SAMPLE_BUFFERS : None, 1,
-      GLX_SAMPLES, opts->samples,
+      opts->samples == 0 ? None : GLX_SAMPLE_BUFFERS, 1,
+      opts->samples == 0 ? None : GLX_SAMPLES, opts->samples,
       None
    };
 
@@ -245,13 +252,13 @@ int sgl_init(const struct sgl_context_options *opts)
    bool fullscreen = opts->screen_type == SGL_SCREEN_FULLSCREEN;
    
    XSetWindowAttributes swa = {
-      .colormap = g_cmap = XCreateColormap(g_dpy, RootWindow(g_dpy, vi->screen), vi->visual, AllocNone),
-      .border_pixel = 0,
-      .event_mask = StructureNotifyMask,
+      .colormap          = g_cmap = XCreateColormap(g_dpy, RootWindow(g_dpy, vi->screen), vi->visual, AllocNone),
+      .border_pixel      = 0,
+      .event_mask        = StructureNotifyMask,
       .override_redirect = fullscreen ? True : False,
    };
 
-   unsigned width = opts->res.width;
+   unsigned width  = opts->res.width;
    unsigned height = opts->res.height;
 
    set_desktop_mode();
@@ -270,7 +277,7 @@ int sgl_init(const struct sgl_context_options *opts)
    }
    else if (opts->screen_type == SGL_SCREEN_WINDOWED_FULLSCREEN)
    {
-      width = g_desktop_mode.hdisplay;
+      width  = g_desktop_mode.hdisplay;
       height = g_desktop_mode.vdisplay;
    }
 
@@ -280,7 +287,7 @@ int sgl_init(const struct sgl_context_options *opts)
          CWBorderPixel | CWColormap | CWEventMask | (fullscreen ? CWOverrideRedirect : 0), &swa);
    XSetWindowBackground(g_dpy, g_win, 0);
 
-   g_last_width = opts->res.width;
+   g_last_width  = opts->res.width;
    g_last_height = opts->res.height;
 
    sgl_set_window_title(opts->title);
@@ -339,6 +346,12 @@ int sgl_init(const struct sgl_context_options *opts)
    }
    else
       g_ctx = glXCreateNewContext(g_dpy, fbc, GLX_RGBA_TYPE, 0, True);
+
+   if (!g_ctx)
+   {
+      fprintf(stderr, "[SGL]: Failed to create GLX context.\n");
+      goto error;
+   }
    
    glXMakeCurrent(g_dpy, g_win, g_ctx);
    XSync(g_dpy, False);
@@ -367,8 +380,212 @@ error:
    return SGL_ERROR;
 }
 
+#ifdef SGL_HAVE_EGL
+int sgl_init_egl(const struct sgl_context_options *opts)
+{
+   if (g_inited)
+      return SGL_ERROR;
+
+   g_quit      = 0;
+   g_has_focus = true;
+   g_resized   = false;
+
+   g_dpy = XOpenDisplay(NULL);
+   if (!g_dpy)
+      goto error;
+
+   EGLConfig config;
+   EGLint num_configs, egl_major, egl_minor;
+
+   g_egl_dpy = eglGetDisplay(g_dpy);
+   if (!g_egl_dpy)
+   {
+      fprintf(stderr, "[SGL]: Couldn't get EGL display.\n");
+      goto error;
+   }
+
+   if (!eglInitialize(g_egl_dpy, &egl_major, &egl_minor))
+   {
+      fprintf(stderr, "[SGL]: eglInitialize() failed.\n");
+      goto error;
+   }
+
+   const EGLint egl_attribs[] = {
+      EGL_RED_SIZE,        1,
+      EGL_GREEN_SIZE,      1,
+      EGL_BLUE_SIZE,       1,
+      EGL_DEPTH_SIZE,      1,
+      EGL_RENDERABLE_TYPE, opts->context.major == 2 ? EGL_OPENGL_ES2_BIT : EGL_OPENGL_ES_BIT,
+      EGL_NONE,
+   };
+
+   const EGLint egl_ctx_attribs[] = {
+      EGL_CONTEXT_CLIENT_VERSION, opts->context.major,
+      EGL_NONE,
+   };
+
+   if (!eglChooseConfig(g_egl_dpy, egl_attribs, &config, 1, &num_configs)
+         || num_configs == 0 || !config)
+   {
+      fprintf(stderr, "[SGL]: eglChooseConfig() failed.\n");
+      goto error;
+   }
+
+   EGLint vid = 0;
+   if (!eglGetConfigAttrib(g_egl_dpy, config, EGL_NATIVE_VISUAL_ID, &vid))
+   {
+      fprintf(stderr, "[SGL]: eglGetConfigAttrib() failed.\n");
+      goto error;
+   }
+
+   XVisualInfo vis_template = { .visualid = vid };
+   int num_visuals = 0;
+   XVisualInfo *vi = XGetVisualInfo(g_dpy, VisualIDMask, &vis_template, &num_visuals);
+   if (!vi)
+   {
+      fprintf(stderr, "[SGL]: XGetVisualInfo() failed.\n");
+      goto error;
+   }
+
+   // Create Window.
+   bool fullscreen = opts->screen_type == SGL_SCREEN_FULLSCREEN;
+   
+   XSetWindowAttributes swa = {
+      .colormap          = g_cmap = XCreateColormap(g_dpy, RootWindow(g_dpy, vi->screen), vi->visual, AllocNone),
+      .border_pixel      = 0,
+      .event_mask        = StructureNotifyMask,
+      .override_redirect = fullscreen ? True : False,
+   };
+
+   unsigned width  = opts->res.width;
+   unsigned height = opts->res.height;
+
+   set_desktop_mode();
+
+   if (fullscreen)
+   {
+      XF86VidModeModeInfo mode;
+      if (get_video_mode(width, height, &mode))
+      {
+         XF86VidModeSwitchToMode(g_dpy, DefaultScreen(g_dpy), &mode);
+         XF86VidModeSetViewPort(g_dpy, DefaultScreen(g_dpy), 0, 0);
+         g_should_reset_mode = true;
+      }
+      else
+         goto error;
+   }
+   else if (opts->screen_type == SGL_SCREEN_WINDOWED_FULLSCREEN)
+   {
+      width  = g_desktop_mode.hdisplay;
+      height = g_desktop_mode.vdisplay;
+   }
+
+   // Create window.
+   g_win = XCreateWindow(g_dpy, RootWindow(g_dpy, vi->screen),
+         0, 0, width, height, 0,
+         vi->depth, InputOutput, vi->visual, 
+         CWBorderPixel | CWColormap | CWEventMask | (fullscreen ? CWOverrideRedirect : 0), &swa);
+   XSetWindowBackground(g_dpy, g_win, 0);
+
+   eglBindAPI(opts->context.major == 2 ? EGL_OPENGL_ES2_BIT : EGL_OPENGL_ES_BIT);
+
+   g_last_width  = opts->res.width;
+   g_last_height = opts->res.height;
+
+   // Create context.
+   g_egl_ctx = eglCreateContext(g_egl_dpy, config, EGL_NO_CONTEXT, egl_ctx_attribs);
+
+   if (!g_egl_ctx)
+   {
+      fprintf(stderr, "[SGL]: Failed to create EGL context.\n");
+      goto error;
+   }
+
+   g_egl_surf = eglCreateWindowSurface(g_egl_dpy, config, g_win, NULL);
+   if (!g_egl_surf)
+   {
+      fprintf(stderr, "[SGL]: Failed to create EGL surface.\n");
+      goto error;
+   }
+
+   // Set up window.
+   sgl_set_window_title(opts->title);
+
+   if (fullscreen)
+   {
+      XMapRaised(g_dpy, g_win);
+      XGrabKeyboard(g_dpy, g_win, True, GrabModeAsync, GrabModeAsync, CurrentTime);
+   }
+   else
+      XMapWindow(g_dpy, g_win);
+
+   if (opts->screen_type == SGL_SCREEN_WINDOWED_FULLSCREEN)
+      set_windowed_fullscreen();
+
+   g_quit_atom = XInternAtom(g_dpy, "WM_DELETE_WINDOW", False);
+   if (g_quit_atom)
+      XSetWMProtocols(g_dpy, g_win, &g_quit_atom, 1);
+
+   // Catch signals.
+   struct sigaction sa = {
+      .sa_handler = sighandler,
+      .sa_flags = SA_RESTART,
+   };
+   sigemptyset(&sa.sa_mask);
+   sigaction(SIGINT, &sa, NULL);
+   sigaction(SIGTERM, &sa, NULL);
+
+   XEvent event;
+   XIfEvent(g_dpy, &event, glx_wait_notify, NULL);
+
+   // Bind context.
+   if (!eglMakeCurrent(g_egl_dpy, g_egl_surf, g_egl_surf, g_egl_ctx))
+   {
+      fprintf(stderr, "[SGL]: Failed to make EGL context current.\n");
+      goto error;
+   }
+
+   XFree(vi);
+
+   g_egl = true;
+   eglSwapInterval(g_egl_dpy, opts->swap_interval);
+
+   g_inited = true;
+   return SGL_OK;
+   
+error:
+   sgl_deinit();
+   return SGL_ERROR;
+}
+#endif
+
+int sgl_init(const struct sgl_context_options *opts)
+{
+#ifdef SGL_HAVE_EGL
+   if (opts->context.style != SGL_CONTEXT_GLES)
+      return sgl_init_glx(opts);
+   else
+      return sgl_init_egl(opts);
+#else
+   return sgl_init_glx(opts);
+#endif
+}
+
 void sgl_deinit(void)
 {
+#ifdef SGL_HAVE_EGL
+   if (g_egl_dpy)
+   {
+      if (g_egl_ctx)
+         eglDestroyContext(g_egl_dpy, g_egl_ctx);
+      if (g_egl_surf)
+         eglDestroySurface(g_egl_dpy, g_egl_surf);
+      eglTerminate(g_egl_dpy);
+   }
+#endif
+
+   g_egl = false;
+
    if (g_ctx)
    {
       glFinish();
@@ -407,14 +624,22 @@ void sgl_deinit(void)
 
 void sgl_swap_buffers(void)
 {
-   if (g_is_double_buffered)
+   if (g_is_double_buffered && !g_egl)
       glXSwapBuffers(g_dpy, g_win);
+#ifdef SGL_HAVE_EGL
+   else
+      eglSwapBuffers(g_egl_dpy, g_egl_surf);
+#endif
 }
 
 void sgl_set_swap_interval(unsigned interval)
 {
-   if (g_pglSwapInterval)
+   if (g_pglSwapInterval && !g_egl)
       g_pglSwapInterval(interval);
+#ifdef SGL_HAVE_EGL
+   else
+      eglSwapInterval(g_egl_dpy, interval);
+#endif
 }
 
 int sgl_check_resize(unsigned *width, unsigned *height)

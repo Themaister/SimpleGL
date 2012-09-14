@@ -28,6 +28,10 @@ extern "C" {
 #define SGL_CONTEXT_LEGACY 0
 #define SGL_CONTEXT_MODERN 1
 
+#ifdef SGL_HAVE_EGL
+#define SGL_CONTEXT_GLES 2
+#endif
+
 struct sgl_resolution
 {
    /* Requested width of window. Ignored if using windowed fullscreen. */
@@ -94,8 +98,16 @@ struct sgl_handles;
 
 /* X11 */
 #define SGL_X11
+#ifdef SGL_HAVE_EGL
+#include <EGL/egl.h>
+#include <EGL/eglext.h>
+#include <GLES2/gl2.h>
+#include <GLES2/gl2ext.h>
+#else
+#define GL_GLEXT_PROTOTYPES
 #include <GL/gl.h>
 #include <GL/glext.h>
+#endif
 #ifdef SGL_EXPOSE_INTERNAL
 #include <GL/glx.h>
 struct sgl_handles
